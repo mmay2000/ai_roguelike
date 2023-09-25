@@ -4,6 +4,7 @@
 #include "raylib.h"
 #include <cfloat>
 #include <cmath>
+#include <iostream>
 
 class AttackEnemyState : public State
 {
@@ -67,6 +68,35 @@ static void on_closest_enemy_pos(flecs::world &ecs, flecs::entity entity, Callab
   });
 }
 
+template<typename Callable>
+static void on_closest_player_teammate_pos(flecs::world& ecs, flecs::entity entity, Callable c)
+{
+    static auto enemiesQuery = ecs.query<const Position, const Team, Hitpoints, IsPlayer>();
+    entity.set([&](const Position& pos, const Team& t, Action& a)
+        {
+            flecs::entity closestTeammate;
+            float closestDist = FLT_MAX;
+            Position closestPos;
+            Hitpoints playerHp;
+            enemiesQuery.each([&](flecs::entity teammate, const Position& epos, const Team& et, Hitpoints& hp, IsPlayer)
+                {
+                    if (t.team != et.team)
+                        return;
+
+                    float curDist = dist(epos, pos);
+                    if (curDist < closestDist)
+                    {
+                        closestDist = curDist;
+                        closestPos = epos;
+                        closestTeammate = teammate;
+                        playerHp = hp;
+                    }
+                });
+            if (ecs.is_valid(closestTeammate))
+                c(a, pos, closestPos, playerHp);
+        });
+}
+
 class MoveToEnemyState : public State
 {
 public:
@@ -94,6 +124,25 @@ public:
       a.action = inverse_move(move_towards(pos, enemy_pos));
     });
   }
+};
+
+class FollowFriendPlayerState : public State
+{
+public:
+    FollowFriendPlayerState() {}
+    void enter() const override {}
+    void exit() const override {}
+    void act(float/* dt*/, flecs::world& ecs, flecs::entity entity) const override
+    {
+        on_closest_player_teammate_pos(ecs, entity, [&](Action& a, const Position& pos,
+            const Position& enemy_pos, Hitpoints& playerHP)
+            {
+                if (dist(pos, enemy_pos) > 2.5f)
+                    a.action = move_towards(pos, enemy_pos);
+                else
+                    a.action = EA_NOP;
+            });
+    }
 };
 
 class PatrolState : public State
@@ -126,6 +175,66 @@ public:
   void act(float/* dt*/, flecs::world &ecs, flecs::entity entity) const override {}
 };
 
+class HealState : public State
+{
+public:
+    void enter() const override {}
+    void exit() const override {}
+    void act(float/* dt*/, flecs::world& ecs, flecs::entity entity) const override
+    {
+        entity.set([&](Action& a, Hitpoints& hp, const HealAmount& healAmount, CoolDown& healCD)
+            {
+                if (healCD.turnsWithoutCastCounter >= healCD.turnLimit)
+                {
+                    healCD.turnsWithoutCastCounter = 0;
+                    hp.hitpoints += healAmount.amount;
+                    a.action = EA_HEAL;
+                }
+                else
+                    a.action = EA_NOP;
+
+                //std::cout << healCD.turnsWithoutCastCounter << " " << hp.hitpoints << "\n";
+            });
+    }
+};
+
+class HealFriendPlayerState : public State
+{
+public:
+    void enter() const override {}
+    void exit() const override {}
+    void act(float/* dt*/, flecs::world& ecs, flecs::entity entity) const override
+    {
+        
+        on_closest_player_teammate_pos(ecs, entity, [&](Action& a, const Position& pos, 
+            const Position& player_pos, Hitpoints& playerHP)
+            {
+                static auto playersQuery = ecs.query<const Position, Hitpoints, IsPlayer>();
+
+                entity.set([&](Action& a, const HealAmount& healAmount, CoolDown& healCD)
+                    {
+                        if (healCD.turnsWithoutCastCounter >= healCD.turnLimit)
+                        {
+                            playersQuery.each([&](flecs::entity player, const Position playerPos, Hitpoints& hp, IsPlayer)
+                                {
+                                    if (dist_sq(pos, player_pos) == dist_sq(pos, playerPos))
+                                    {
+                                        healCD.turnsWithoutCastCounter = 0;
+                                        hp.hitpoints += healAmount.amount;
+                                        a.action = EA_HEAL;
+                                       // std::cout << hp.hitpoints << " " << healCD.turnsWithoutCastCounter << std::endl;
+                                    }
+                                });
+                        }
+                        else
+                            a.action = EA_NOP;
+                    });
+                
+            });
+            
+    }
+};
+
 class EnemyAvailableTransition : public StateTransition
 {
   float triggerDist;
@@ -149,20 +258,68 @@ public:
   }
 };
 
-class HitpointsLessThanTransition : public StateTransition
+class FriendPlayerAvailableTransition : public StateTransition
 {
+    float triggerDist;
+public:
+    FriendPlayerAvailableTransition(float in_dist) : triggerDist(in_dist) {}
+    bool isAvailable(flecs::world& ecs, flecs::entity entity) const override
+    {
+        static auto enemiesQuery = ecs.query<const Position, const Team, IsPlayer>();
+        bool playersFound = false;
+        entity.get([&](const Position& pos, const Team& t)
+            {
+                enemiesQuery.each([&](flecs::entity enemy, const Position& epos, const Team& et, IsPlayer)
+                    {
+                        if (t.team != et.team)
+                            return;
+                        float curDist = dist(epos, pos);
+                        playersFound |= curDist <= triggerDist;
+                    });
+            });
+        return playersFound;
+    }
+};
+
+class FriendPlayerHitpointsLessThanTransition : public StateTransition
+{
+
   float threshold;
 public:
-  HitpointsLessThanTransition(float in_thres) : threshold(in_thres) {}
+    FriendPlayerHitpointsLessThanTransition(float in_thres) : threshold(in_thres) {}
   bool isAvailable(flecs::world &ecs, flecs::entity entity) const override
   {
     bool hitpointsThresholdReached = false;
-    entity.get([&](const Hitpoints &hp)
-    {
-      hitpointsThresholdReached |= hp.hitpoints < threshold;
-    });
+    
+    static auto enemiesQuery = ecs.query<Hitpoints , const Team, IsPlayer>();
+    entity.get([&](const Team& t)
+        {
+            enemiesQuery.each([&](flecs::entity enemy, Hitpoints &hp, const Team& et, IsPlayer)
+                {
+                    if (t.team != et.team)
+                        return;
+                    hitpointsThresholdReached |= hp.hitpoints < threshold;
+                });
+        });
+        
     return hitpointsThresholdReached;
   }
+};
+
+class HitpointsLessThanTransition : public StateTransition
+{
+    float threshold;
+public:
+    HitpointsLessThanTransition(float in_thres) : threshold(in_thres) {}
+    bool isAvailable(flecs::world& ecs, flecs::entity entity) const override
+    {
+        bool hitpointsThresholdReached = false;
+        entity.get([&](const Hitpoints& hp)
+            {
+                hitpointsThresholdReached |= hp.hitpoints < threshold;
+            });
+        return hitpointsThresholdReached;
+    }
 };
 
 class EnemyReachableTransition : public StateTransition
@@ -232,10 +389,30 @@ State *create_nop_state()
   return new NopState();
 }
 
+State* create_heal_state()
+{
+    return new HealState();
+}
+
+State* create_heal_friend_player_state()
+{
+    return new HealFriendPlayerState();
+}
+
+State* create_follow_friend_player_state()
+{
+    return new FollowFriendPlayerState();
+}
+
 // transitions
 StateTransition *create_enemy_available_transition(float dist)
 {
   return new EnemyAvailableTransition(dist);
+}
+
+StateTransition* create_friend_player_available_transition(float dist)
+{
+    return new FriendPlayerAvailableTransition(dist);
 }
 
 StateTransition *create_enemy_reachable_transition()
@@ -246,6 +423,11 @@ StateTransition *create_enemy_reachable_transition()
 StateTransition *create_hitpoints_less_than_transition(float thres)
 {
   return new HitpointsLessThanTransition(thres);
+}
+
+StateTransition* create_friend_player_hitpoints_less_than_transition(float thres)
+{
+    return new FriendPlayerHitpointsLessThanTransition(thres);
 }
 
 StateTransition *create_negate_transition(StateTransition *in)
