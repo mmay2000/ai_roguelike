@@ -61,7 +61,9 @@ enum Actions
   EA_MOVE_END,
   EA_ATTACK = EA_MOVE_END,
   EA_NUM,
-  EA_HEAL
+  EA_HEAL,
+  EA_SPAWN_HEAL,
+  EA_SPAWN_MONSTER
 };
 
 struct Action
@@ -91,6 +93,12 @@ struct CoolDown
 	int turnsWithoutCastCounter = 1;
 };
 
+struct TargetPosition
+{
+	int x = 0;
+	int y = 0;
+};
+
 struct PowerupAmount
 {
   float amount = 0.f;
@@ -118,3 +126,15 @@ struct Team
 
 struct TextureSource {};
 
+struct IsBoost {};
+
+struct IsHealSpawner {};
+
+struct IsMonsterSpawner {};
+
+struct IsSummon {};
+
+struct DeadFlag 
+{
+	bool isDead = false;
+};

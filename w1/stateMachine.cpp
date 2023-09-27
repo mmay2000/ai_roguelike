@@ -42,3 +42,8 @@ void StateMachine::addTransition(StateTransition *trans, int from, int to)
   transitions[from].push_back(std::make_pair(trans, to));
 }
 
+void StateMachine::resetStateMachine()
+{
+    curStateIdx = 0;
+}
+

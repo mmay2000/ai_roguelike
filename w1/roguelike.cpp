@@ -121,6 +121,89 @@ static void add_teammate_healer_sm(flecs::entity entity)
         });
 }
 
+static const StateMachine& add_phase0_sm_nested()
+{
+    StateMachine *sm = new StateMachine();
+
+    int moveToTeargetPos = sm->addState(create_move_to_target_state());
+    int spawnHeal = sm->addState(create_spawn_heal_state());
+
+    sm->addTransition(create_target_pos_reached_transition(), moveToTeargetPos, spawnHeal);
+    sm->addTransition(create_negate_transition(create_target_pos_reached_transition()), spawnHeal, moveToTeargetPos);
+
+    return std::move(*sm);
+}
+
+static const StateMachine& add_phase1_sm_nested()
+{
+    StateMachine* sm = new StateMachine();
+
+    int patrol = sm->addState(create_patrol_state(3.f));
+    int moveToEnemy = sm->addState(create_move_to_enemy_state());
+    int monsterSpawn = sm->addState(create_spawn_monster_state());
+
+    sm->addTransition(create_enemy_available_transition(2.5f), patrol, moveToEnemy);  
+
+    sm->addTransition(create_enemy_available_transition(2.5f), monsterSpawn, moveToEnemy);
+    sm->addTransition(create_negate_transition(create_enemy_available_transition(3.f)), monsterSpawn, patrol);
+
+    sm->addTransition(create_check_monster_spawn_transition(), patrol, monsterSpawn);
+
+    sm->addTransition(create_check_monster_spawn_transition(), moveToEnemy, monsterSpawn);
+
+    return std::move(*sm);
+}
+
+static const StateMachine& add_phase2_sm_nested()
+{
+    StateMachine* sm = new StateMachine();
+
+    int patrol = sm->addState(create_patrol_state(3.f));
+    int moveToEnemy = sm->addState(create_move_to_enemy_state());
+
+    sm->addTransition(create_enemy_available_transition(8.f), patrol, moveToEnemy);
+    sm->addTransition(create_negate_transition(create_enemy_available_transition(8.f)), moveToEnemy, patrol);
+
+    return std::move(*sm);
+}
+
+static void add_summon_monster_sm(flecs::entity entity)
+{
+    entity.get([](StateMachine& sm)
+        {
+            int attack = sm.addState(create_move_to_enemy_state());
+            int dead = sm.addState(create_immortal_state());
+
+            sm.addTransition(create_hitpoints_less_than_transition(10), attack, dead);
+            sm.addTransition(create_negate_transition(create_hitpoints_less_than_transition(10)), dead, attack);
+
+        });
+}
+
+static void add_crafter_boss_sm(flecs::entity entity)
+{
+    entity.get([](StateMachine& sm)
+        {
+            int phase0 = sm.addState(create_nested_statemachine_state(add_phase0_sm_nested()));
+            int phase1 = sm.addState(create_nested_statemachine_state(add_phase1_sm_nested()));
+            int phase2 = sm.addState(create_nested_statemachine_state(add_phase2_sm_nested()));
+
+            sm.addTransition(create_and_transition(create_hitpoints_less_than_transition(6000.f), create_enemy_available_transition(10.f)),
+                phase0, phase2);
+            sm.addTransition(create_and_transition(create_negate_transition(create_hitpoints_less_than_transition(6000.f)),
+                create_enemy_available_transition(10.f)), phase0, phase1);
+
+            sm.addTransition((create_hitpoints_less_than_transition(6000.f)),
+                phase1, phase2);
+
+            sm.addTransition(create_negate_transition(create_enemy_available_transition(10.f)),
+                phase1, phase0);
+
+            sm.addTransition(create_negate_transition(create_enemy_available_transition(10.f)),
+                phase2, phase0);
+        });
+}
+
 static flecs::entity create_monster(flecs::world &ecs, int x, int y, Color color)
 {
   return ecs.entity()
@@ -185,12 +268,58 @@ static void create_player(flecs::world &ecs, int x, int y)
     .set(MeleeDamage{50.f});
 }
 
+static flecs::entity create_boss_monster(flecs::world& ecs, int x, int y, Color color)
+{
+    return ecs.entity()
+        .set(Position{ x, y })
+        .set(MovePos{ x, y })
+        .set(PatrolPos{ x, y })
+        .set(Hitpoints{ 15000.f })
+        .set(Action{ EA_NOP })
+        .set(Color{ color })
+        .set(StateMachine{})
+        .set(Team{ 1 })
+        .set(NumActions{ 1, 0 })
+        .set(TargetPosition{ 1, 5 })
+        .add<IsHealSpawner>()
+        .add<IsMonsterSpawner>()
+        .set(CoolDown{ 25, 1 })
+        .set(MeleeDamage{ 25.f });
+}
+
 static void create_heal(flecs::world &ecs, int x, int y, float amount)
 {
   ecs.entity()
     .set(Position{x, y})
     .set(HealAmount{amount})
+    .add<IsBoost>()
     .set(GetColor(0x44ff44ff));
+}
+
+static void create_summon_heal(flecs::world& ecs, int x, int y, float amount)
+{
+    ecs.entity()
+        .set(Position{ x, y })
+        .set(HealAmount{ amount })
+        .add<IsSummon>()
+        .set(GetColor(0x44ff44ff));
+}
+
+static flecs::entity create_summon_monster(flecs::world& ecs, int x, int y, Color color)
+{
+    return ecs.entity()
+        .set(Position{ x, y })
+        .set(MovePos{ x, y })
+        .set(PatrolPos{ x, y })
+        .set(Hitpoints{ 50.f })
+        .set(Action{ EA_NOP })
+        .set(Color{ color })
+        .set(StateMachine{})
+        .set(Team{ 1 })
+        .set(NumActions{ 1, 0 })
+        .add<IsSummon>()
+        .set(DeadFlag{false})
+        .set(MeleeDamage{ 2.f });
 }
 
 static void create_powerup(flecs::world &ecs, int x, int y, float amount)
@@ -198,6 +327,7 @@ static void create_powerup(flecs::world &ecs, int x, int y, float amount)
   ecs.entity()
     .set(Position{x, y})
     .set(PowerupAmount{amount})
+    .add<IsBoost>()
     .set(Color{255, 255, 0, 255});
 }
 
@@ -246,14 +376,25 @@ void init_roguelike(flecs::world &ecs)
 {
   register_roguelike_systems(ecs);
 
+  // default enemies & first task enemies
+  /* 
   add_patrol_attack_flee_sm(create_monster(ecs, 5, 5, GetColor(0xee00eeff)));
   add_patrol_attack_flee_sm(create_monster(ecs, 10, -5, GetColor(0xee00eeff)));
   add_patrol_flee_sm(create_monster(ecs, -5, -5, GetColor(0x111111ff)));
   add_attack_sm(create_monster(ecs, -5, 5, GetColor(0x880000ff)));
   add_berserk_sm(create_monster(ecs, -5, 7, GetColor(0x00FFFFFF)));
   add_healer_sm(create_healing_monster(ecs, 5, 7, GetColor(0xCD853Fff), 100.f, 1));
+  
+  add_teammate_healer_sm(create_healing_teammate(ecs, 1, 1, GetColor(0x9932CCff), 10.f, 1));
+  */
+  
+  add_crafter_boss_sm(create_boss_monster(ecs, 6, 7, GetColor(0x0000FFff)));
 
-  add_teammate_healer_sm(create_healing_teammate(ecs, 5, 7, GetColor(0x0000FFff), 10.f, 1));
+  create_summon_heal(ecs, 1, -5, 50.f);
+  create_summon_heal(ecs, 1, 5, 50.f);
+  add_summon_monster_sm(create_summon_monster(ecs, 7, 5, GetColor(0x880000ff)));
+  add_summon_monster_sm(create_summon_monster(ecs, 7, 6, GetColor(0x880000ff)));
+  add_summon_monster_sm(create_summon_monster(ecs, 7, 7, GetColor(0x880000ff)));
 
   create_player(ecs, 0, 0);
 
@@ -334,24 +475,38 @@ static void process_actions(flecs::world &ecs)
     });
   });
 
+  
+  static auto saveAllSummons = ecs.query< Hitpoints, DeadFlag, const IsSummon>();
+  ecs.defer([&]
+      {
+          saveAllSummons.each([&](flecs::entity entity, Hitpoints& hp, DeadFlag& dead, const IsSummon)
+              {
+                  if (hp.hitpoints <= 0.f)
+                  {
+                    hp.hitpoints = 1.f;
+                  }
+              });
+      });
+
   static auto deleteAllDead = ecs.query<const Hitpoints>();
   ecs.defer([&]
   {
     deleteAllDead.each([&](flecs::entity entity, const Hitpoints &hp)
     {
-      if (hp.hitpoints <= 0.f)
-        entity.destruct();
+            if (hp.hitpoints <= 0.f)
+                entity.destruct();
     });
   });
 
   static auto playerPickup = ecs.query<const IsPlayer, const Position, Hitpoints, MeleeDamage>();
-  static auto healPickup = ecs.query<const Position, const HealAmount>();
+  static auto healPickup = ecs.query<const Position, const HealAmount, const IsBoost>();
   static auto powerupPickup = ecs.query<const Position, const PowerupAmount>();
+  static auto bossHealPickup = ecs.query<const Position, HealAmount, Color, const IsSummon>();
   ecs.defer([&]
   {
     playerPickup.each([&](const IsPlayer&, const Position &pos, Hitpoints &hp, MeleeDamage &dmg)
     {
-      healPickup.each([&](flecs::entity entity, const Position &ppos, const HealAmount &amt)
+      healPickup.each([&](flecs::entity entity, const Position &ppos, const HealAmount &amt, const IsBoost)
       {
         if (pos == ppos)
         {
@@ -367,7 +522,17 @@ static void process_actions(flecs::world &ecs)
           entity.destruct();
         }
       });
-    });
+      bossHealPickup.each([&](flecs::entity entity, const Position& ppos,
+          HealAmount& amt, Color& cl, const IsSummon)
+          {
+              if (ppos == pos)
+              {
+                  dmg.damage += amt.amount;
+                  amt.amount = 0;
+                  cl = GetColor(0x228822ff);
+              }
+          });
+     });
   });
 }
 
