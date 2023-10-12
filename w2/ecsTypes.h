@@ -61,7 +61,8 @@ enum Actions
   EA_MOVE_UP,
   EA_MOVE_END,
   EA_ATTACK = EA_MOVE_END,
-  EA_NUM
+  EA_NUM,
+  EA_SWITCH_WAY_POINT
 };
 
 struct Action
@@ -112,3 +113,11 @@ struct Team
 
 struct TextureSource {};
 
+struct IsBoost {};
+
+struct IsPickUpper {};
+
+struct WayPoint
+{
+	flecs::entity nextPoint;
+};

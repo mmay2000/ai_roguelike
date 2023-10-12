@@ -17,8 +17,16 @@ StateTransition *create_hitpoints_less_than_transition(float thres);
 StateTransition *create_negate_transition(StateTransition *in);
 StateTransition *create_and_transition(StateTransition *lhs, StateTransition *rhs);
 
+BehNode* _not(BehNode* node);
+
+BehNode* find_boost(flecs::entity entity, const char* bb_name);
+
+BehNode* on_way(flecs::entity entity, const char* bb_name);
+
 BehNode *sequence(const std::vector<BehNode*> &nodes);
 BehNode *selector(const std::vector<BehNode*> &nodes);
+
+BehNode* parallel(const std::vector<BehNode*>& nodes);
 
 BehNode *move_to_entity(flecs::entity entity, const char *bb_name);
 BehNode *is_low_hp(float thres);

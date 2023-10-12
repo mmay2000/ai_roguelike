@@ -59,3 +59,5 @@ CMakeCache.txt
 *.cmake
 compile_commands.json
 build/*
+/.vs
+/out/build/x64-Debug
