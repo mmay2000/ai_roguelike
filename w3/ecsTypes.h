@@ -65,6 +65,7 @@ enum Actions
   EA_MOVE_END,
   EA_ATTACK = EA_MOVE_END,
   EA_HEAL_SELF,
+  EA_PASS,
   EA_NUM
 };
 
@@ -100,6 +101,7 @@ struct PlayerInput
   bool right = false;
   bool up = false;
   bool down = false;
+  bool passed = false;
 };
 
 struct Symbol
@@ -127,5 +129,10 @@ struct ActionLog
 {
   std::vector<std::string> log;
   size_t capacity = 5;
+};
+
+struct GroupPartoler
+{
+	int last_move = EA_MOVE_START;
 };
 

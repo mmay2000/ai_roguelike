@@ -5,6 +5,16 @@
 #include "raylib.h"
 #include "blackboard.h"
 #include <algorithm>
+#include <random>
+
+static std::random_device dev;
+static std::default_random_engine engine(dev());
+
+static float get_random_float(float a, float b)
+{
+    std::uniform_real_distribution<float> dist(a, b);
+    return dist(engine);
+}
 
 struct CompoundNode : public BehNode
 {
@@ -77,6 +87,80 @@ struct UtilitySelector : public BehNode
     }
     return BEH_FAIL;
   }
+};
+
+struct RandomUtilitySelector : public UtilitySelector
+{
+    BehResult update(flecs::world& ecs, flecs::entity entity, Blackboard& bb) override
+    {
+        std::vector<float> utilityScores;
+        float sum = 0;
+        for (size_t i = 0; i < utilityNodes.size(); ++i)
+        {
+            const float utilityScore = exp(utilityNodes[i].second(bb));
+            utilityScores.push_back(utilityScore);
+            sum += utilityScore;
+        }
+        for (size_t i = 0; i < utilityNodes.size(); ++i)
+        {
+            float r = get_random_float(0.f, sum);
+
+            size_t nodeIdx = 0;
+            while(r > 0.f) 
+            {
+                r -= utilityScores[nodeIdx];
+                nodeIdx++;
+            }
+            nodeIdx -= 1;
+
+            BehResult res = utilityNodes[nodeIdx].first->update(ecs, entity, bb);
+            if (res != BEH_FAIL)
+                return res;
+
+            sum -= utilityScores[nodeIdx];
+            utilityScores[nodeIdx] = 0;
+        }
+        return BEH_FAIL;
+    }
+};
+
+struct InertialUtilitySelector : public UtilitySelector
+{
+    std::vector<float> inert;
+
+private:
+    float inertia_amount = 5.f;
+    float cooldown = 10.f;
+
+    BehResult update(flecs::world& ecs, flecs::entity entity, Blackboard& bb) override
+    {
+        std::vector<std::pair<float, size_t>> utilityScores;
+        for (size_t i = 0; i < utilityNodes.size(); ++i)
+        {
+            const float utilityScore = utilityNodes[i].second(bb) + inert[i];
+            utilityScores.push_back(std::make_pair(utilityScore, i));
+        }
+        std::sort(utilityScores.begin(), utilityScores.end(), [](auto& lhs, auto& rhs)
+            {
+                return lhs.first > rhs.first;
+            });
+        for (const std::pair<float, size_t>& node : utilityScores)
+        {
+            size_t nodeIdx = node.second;
+            BehResult res = utilityNodes[nodeIdx].first->update(ecs, entity, bb);
+            if (res != BEH_FAIL) {
+                float prev = inert[nodeIdx];
+                std::ranges::fill(inert, 0);
+                if (prev > 0)
+                    inert[nodeIdx] = prev - cooldown;
+                else
+                    inert[nodeIdx] = prev + inertia_amount;
+                return res;
+            }
+        }
+
+        return BEH_FAIL;
+    }
 };
 
 struct MoveToEntity : public BehNode
@@ -225,6 +309,90 @@ struct Patrol : public BehNode
   }
 };
 
+struct GroupPatrol : public BehNode
+{
+    int dirChance[4][2] = { {EA_MOVE_LEFT, 100}, {EA_MOVE_RIGHT, 100}, {EA_MOVE_DOWN, 100}, {EA_MOVE_UP, 100} };
+    GroupPatrol()
+    { }
+
+    BehResult update(flecs::world&, flecs::entity entity, Blackboard& bb) override
+    {
+        BehResult res = BEH_RUNNING;
+        entity.set([&](Action& a, const Position& pos, GroupPartoler& patrol)
+            {
+                int move_dir = EA_MOVE_START;
+                int sum = 0;
+                for (int i = 0; i < 4; ++i)
+                    sum += dirChance[i][1];
+
+                int rand = GetRandomValue(1, sum);
+
+                sum = 0;
+                
+                for (int i = 0; i < 4; ++i)
+                {
+                    if (sum <= rand && rand <= dirChance[i][1] + sum)
+                    {
+                        move_dir = dirChance[i][0];
+                        break;
+                    }
+                    sum += dirChance[i][1];
+                }
+
+                a.action = move_dir;
+                patrol.last_move = move_dir;
+                switch (move_dir)
+                {
+                    case EA_MOVE_LEFT:
+                        dirChance[0][1] = 100;
+                        dirChance[1][1] = 0;
+                        dirChance[2][1] = 30;
+                        dirChance[3][1] = 30;
+                        break;
+                    case EA_MOVE_RIGHT:
+                        dirChance[0][1] = 0;
+                        dirChance[1][1] = 100;
+                        dirChance[2][1] = 30;
+                        dirChance[3][1] = 30;
+                        break;
+                    case EA_MOVE_DOWN:
+                        dirChance[0][1] = 30;
+                        dirChance[1][1] = 30;
+                        dirChance[2][1] = 100;
+                        dirChance[3][1] = 0;
+                        break;
+                    case EA_MOVE_UP:
+                        dirChance[0][1] = 30;
+                        dirChance[1][1] = 30;
+                        dirChance[2][1] = 0;
+                        dirChance[3][1] = 100;
+                        break;
+                }
+            });
+        return res;
+    }
+};
+
+
+struct MoveToPos : public BehNode
+{
+    char* _bb_name;
+    MoveToPos(flecs::entity entity, const char* bb_name) { }
+
+    BehResult update(flecs::world&, flecs::entity entity, Blackboard& bb) override
+    {
+        BehResult res = BEH_RUNNING;
+        entity.set([&](Action& a, const Position& pos)
+            {
+                Position patrolPos = bb.get<Position>("base_position");
+                if(pos != patrolPos)
+                    a.action = move_towards(pos, patrolPos);
+            });
+        return res;
+    }
+};
+
+
 struct PatchUp : public BehNode
 {
   float hpThreshold = 100.f;
@@ -243,7 +411,6 @@ struct PatchUp : public BehNode
     return res;
   }
 };
-
 
 
 BehNode *sequence(const std::vector<BehNode*> &nodes)
@@ -267,6 +434,22 @@ BehNode *utility_selector(const std::vector<std::pair<BehNode*, utility_function
   UtilitySelector *usel = new UtilitySelector;
   usel->utilityNodes = std::move(nodes);
   return usel;
+}
+
+BehNode* random_utility_selector(const std::vector<std::pair<BehNode*, utility_function>>& nodes)
+{
+    RandomUtilitySelector* rusel = new RandomUtilitySelector;
+    rusel->utilityNodes = std::move(nodes);
+    return rusel;
+}
+
+BehNode* inertial_utility_selector(const std::vector<std::pair<BehNode*, utility_function>>& nodes)
+{
+    InertialUtilitySelector* iusel = new InertialUtilitySelector;
+    std::vector<float> inertia(nodes.size(), 0.f);
+    iusel->utilityNodes = std::move(nodes);
+    iusel->inert = std::move(inertia);
+    return iusel;
 }
 
 BehNode *move_to_entity(flecs::entity entity, const char *bb_name)
@@ -299,4 +482,12 @@ BehNode *patch_up(float thres)
   return new PatchUp(thres);
 }
 
+BehNode* group_patrol()
+{
+    return new GroupPatrol();
+}
 
+BehNode* move_to_pos(flecs::entity entity, const char* bb_name)
+{
+    return new MoveToPos(entity, bb_name);
+}
