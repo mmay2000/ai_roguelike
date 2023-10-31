@@ -135,3 +135,21 @@ void dmaps::gen_player_explore_map(flecs::world& ecs, std::vector<float>& map)
             process_dmap(map, dd);
         });
 }
+
+void dmaps::gen_ally_map(flecs::world& ecs, std::vector<float>& map,
+    flecs::entity e) {
+    static auto allyQuery = ecs.query<const Position, const Team>();
+    query_dungeon_data(ecs, [&](const DungeonData& dd)
+        {
+            init_tiles(map, dd);
+            e.get([&](const Team& my_team, const Hitpoints& hp)
+                {
+                    allyQuery.each([&](flecs::entity ent, const Position& pos, const Team& t)
+                        {
+                            if (e != ent && t.team == my_team.team && hp.hitpoints < 30.0f)
+                                map[pos.y * dd.width + pos.x] = 0.0f;
+                        });
+                });
+            process_dmap(map, dd);
+        });
+}

@@ -170,3 +170,5 @@ struct DmapWeights
 struct Hive {};
 
 struct FogOfWar {};
+
+struct IsMage{};

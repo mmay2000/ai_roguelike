@@ -33,6 +33,13 @@ static flecs::entity create_hive_monster(flecs::entity e)
   return e;
 }
 
+static flecs::entity create_mage_monster(flecs::entity e)
+{
+    e.set(DmapWeights{ {{"flee_map", {9.f, 1.f}}, {"approach_map", {1, 2.f}}, {"mage_map", {100.f, 1.f}}} });
+    e.add<IsMage>();
+    return e;
+}
+
 static flecs::entity create_hive(flecs::entity e)
 {
   e.add<Hive>();
@@ -329,10 +336,10 @@ void init_roguelike(flecs::world &ecs)
         UnloadTexture(texture);
       });
 
-  //create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
-  //create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
-  //create_hive_monster(create_monster(ecs, Color{0x11, 0x11, 0x11, 0xff}, "minotaur_tex"));
-  //create_hive(create_player_fleer(create_monster(ecs, Color{0, 255, 0, 255}, "minotaur_tex")));
+  create_mage_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
+ // create_mage_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
+ // create_mage_monster(create_monster(ecs, Color{0x11, 0x11, 0x11, 0xff}, "minotaur_tex"));
+  create_hive(create_player_fleer(create_monster(ecs, Color{0, 255, 0, 255}, "minotaur_tex")));
 
   create_player(ecs, "swordsman_tex");
 
@@ -615,12 +622,20 @@ void process_turn(flecs::world &ecs)
     ecs.entity("explore_map")
         .set(DijkstraMapData{ exploreMap });
 
-    /*
-    ecs.entity("explore_map").add<VisualiseMap>();
-    ecs.entity("explore_map")
-      .set(DmapWeights{ {{"explore_map", {1.f, 1.f}}} })
+    static auto mages = ecs.query<IsMage>();
+    mages.each([&](flecs::entity e, const IsMage) {
+        std::vector<float> allyMap;
+        dmaps::gen_ally_map(ecs, allyMap, e);
+        ecs.entity("mage_map")
+            .set(DijkstraMapData{ allyMap });
+        });
+    
+    
+    ecs.entity("mage_map").add<VisualiseMap>();
+    ecs.entity("mage_map")
+      .set(DmapWeights{ {{"flee_map", {9.f, 1.f}}, {"approach_map", {1, 2.f}}, {"mage_map", {10.f, 1.f}}} })
       .add<VisualiseMap>();
-    */  
+     
   }
 }
 
