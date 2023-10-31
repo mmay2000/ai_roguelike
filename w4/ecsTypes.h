@@ -73,6 +73,7 @@ enum Actions
   EA_ATTACK = EA_MOVE_END,
   EA_HEAL_SELF,
   EA_PASS,
+  EA_EXPLORE,
   EA_NUM
 };
 
@@ -107,8 +108,9 @@ struct PlayerInput
   bool left = false;
   bool right = false;
   bool up = false;
-  bool down = false;
+  bool down = false; 
   bool passed = false;
+  bool explore = false;
 };
 
 struct Symbol
@@ -145,6 +147,7 @@ struct DungeonData
   std::vector<char> tiles; // for pathfinding
   size_t width;
   size_t height;
+  std::vector<bool> fogMap;
 };
 
 struct DijkstraMapData
@@ -165,3 +168,5 @@ struct DmapWeights
 };
 
 struct Hive {};
+
+struct FogOfWar {};

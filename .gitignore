@@ -61,3 +61,6 @@ compile_commands.json
 build/*
 /.vs
 /out/build/x64-Debug
+/w5
+/w4/.vs
+/w4/out/build/x64-Debug

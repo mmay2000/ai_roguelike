@@ -1,6 +1,7 @@
 #include "dijkstraMapGen.h"
 #include "ecsTypes.h"
 #include "dungeonUtils.h"
+#include "math.h"
 
 template<typename Callable>
 static void query_dungeon_data(flecs::world &ecs, Callable c)
@@ -106,3 +107,31 @@ void dmaps::gen_hive_pack_map(flecs::world &ecs, std::vector<float> &map)
   });
 }
 
+void dmaps::gen_player_explore_map(flecs::world& ecs, std::vector<float>& map)
+{
+    auto static playerQuery = ecs.query<const Position, const IsPlayer>();
+    query_dungeon_data(ecs, [&](const DungeonData& dd)
+        {
+            init_tiles(map, dd);
+            playerQuery.each([&](const Position& pos, const IsPlayer) {
+                float minDist = 1e5f;
+                Position minPos{ pos };
+                for(size_t y = 0; y < dd.height; ++y)
+                    for (size_t x = 0; x < dd.width; ++x)
+                    {
+                        if (dd.fogMap[y * dd.width + x] && dd.tiles[y * dd.width + x] == dungeon::floor)
+                        {
+                            Position currPos{ (int)x, (int)y };
+                            float currDist = dist(currPos, pos);
+                            if (currDist < minDist)
+                            {
+                                minPos = currPos;
+                                minDist = currDist;
+                            }
+                        }
+                    }
+                map[minPos.y * dd.width + minPos.x] = 0;
+                });
+            process_dmap(map, dd);
+        });
+}

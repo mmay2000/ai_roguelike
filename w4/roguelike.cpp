@@ -185,7 +185,7 @@ static void register_roguelike_systems(flecs::world &ecs)
 {
   static auto dungeonDataQuery = ecs.query<const DungeonData>();
   ecs.system<PlayerInput, Action, const IsPlayer>()
-    .each([&](PlayerInput &inp, Action &a, const IsPlayer)
+    .each([&](flecs::entity e, PlayerInput &inp, Action &a, const IsPlayer)
     {
       bool left = IsKeyDown(KEY_LEFT);
       bool right = IsKeyDown(KEY_RIGHT);
@@ -206,8 +206,21 @@ static void register_roguelike_systems(flecs::world &ecs)
 
       bool pass = IsKeyDown(KEY_SPACE);
       if (pass && !inp.passed)
-        a.action = EA_PASS;
+          a.action = EA_PASS;
       inp.passed = pass;
+
+      bool explore = IsKeyPressed(KEY_E);
+      inp.explore = explore ? !inp.explore : inp.explore;
+      if (inp.explore)
+      {
+          a.action = EA_EXPLORE;
+          e.set(DmapWeights{ {{"explore_map", {1.f, 1.f}}} });
+      }
+      else
+      {
+          e.remove<DmapWeights>();
+      }
+
     });
   ecs.system<const Position, const Color>()
     .term<TextureSource>(flecs::Wildcard)
@@ -316,10 +329,10 @@ void init_roguelike(flecs::world &ecs)
         UnloadTexture(texture);
       });
 
-  create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
-  create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
-  create_hive_monster(create_monster(ecs, Color{0x11, 0x11, 0x11, 0xff}, "minotaur_tex"));
-  create_hive(create_player_fleer(create_monster(ecs, Color{0, 255, 0, 255}, "minotaur_tex")));
+  //create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
+  //create_hive_monster(create_monster(ecs, Color{0xee, 0x00, 0xee, 0xff}, "minotaur_tex"));
+  //create_hive_monster(create_monster(ecs, Color{0x11, 0x11, 0x11, 0xff}, "minotaur_tex"));
+  //create_hive(create_player_fleer(create_monster(ecs, Color{0, 255, 0, 255}, "minotaur_tex")));
 
   create_player(ecs, "swordsman_tex");
 
@@ -334,14 +347,22 @@ void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
     .set(Texture2D{LoadTexture("assets/wall.png")});
   flecs::entity floorTex = ecs.entity("floor_tex")
     .set(Texture2D{LoadTexture("assets/floor.png")});
+  flecs::entity fogTex = ecs.entity("fog_tex")
+      .set(Texture2D{ LoadTexture("assets/fog.png") });
 
   std::vector<char> dungeonData;
+  std::vector<bool> fogData;
   dungeonData.resize(w * h);
+  fogData.resize(w * h);
   for (size_t y = 0; y < h; ++y)
-    for (size_t x = 0; x < w; ++x)
-      dungeonData[y * w + x] = tiles[y * w + x];
+      for (size_t x = 0; x < w; ++x)
+      {
+          dungeonData[y * w + x] = tiles[y * w + x];
+          fogData[y * w + x] = (tiles[y * w + x] == dungeon::floor) ? true : false;
+      }
+
   ecs.entity("dungeon")
-    .set(DungeonData{dungeonData, w, h});
+    .set(DungeonData{dungeonData, w, h, fogData});
 
   for (size_t y = 0; y < h; ++y)
     for (size_t x = 0; x < w; ++x)
@@ -355,6 +376,12 @@ void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
         tileEntity.add<TextureSource>(wallTex);
       else if (tile == dungeon::floor)
         tileEntity.add<TextureSource>(floorTex);
+      
+      flecs::entity fogEntity = ecs.entity()
+          .add<FogOfWar>()
+          .add<TextureSource>(fogTex)
+          .set(Position{ int(x), int(y) })
+          .set(Color{ 255, 255, 255, 255 });
     }
 }
 
@@ -465,6 +492,8 @@ static void process_actions(flecs::world &ecs)
   static auto playerPickup = ecs.query<const IsPlayer, const Position, Hitpoints, MeleeDamage>();
   static auto healPickup = ecs.query<const Position, const HealAmount>();
   static auto powerupPickup = ecs.query<const Position, const PowerupAmount>();
+  static auto fogOfWar = ecs.query<const Position, const FogOfWar>();
+  static auto dungeon = ecs.query<DungeonData>();
   ecs.defer([&]
   {
     playerPickup.each([&](const IsPlayer&, const Position &pos, Hitpoints &hp, MeleeDamage &dmg)
@@ -485,6 +514,15 @@ static void process_actions(flecs::world &ecs)
           entity.destruct();
         }
       });
+      fogOfWar.each([&](flecs::entity entity, const Position& ppos, const FogOfWar) {
+          if (dist(pos, ppos) < 3)
+          {
+              dungeon.each([&](flecs::entity entity, DungeonData& dd) {
+                  dd.fogMap[ppos.y * dd.width + ppos.x] = false;
+                  });
+              entity.destruct();
+          }
+          });
     });
   });
 }
@@ -533,8 +571,10 @@ void process_turn(flecs::world &ecs)
   static auto stateMachineAct = ecs.query<StateMachine>();
   static auto behTreeUpdate = ecs.query<BehaviourTree, Blackboard>();
   static auto turnIncrementer = ecs.query<TurnCounter>();
+
   if (is_player_acted(ecs))
   {
+    process_dmap_player(ecs);
     if (upd_player_actions_count(ecs))
     {
       // Plan action for NPCs
@@ -570,10 +610,17 @@ void process_turn(flecs::world &ecs)
     ecs.entity("hive_map")
       .set(DijkstraMapData{hiveMap});
 
-    //ecs.entity("flee_map").add<VisualiseMap>();
-    ecs.entity("hive_follower_sum")
-      .set(DmapWeights{{{"hive_map", {1.f, 1.f}}, {"approach_map", {1.8f, 0.8f}}}})
+    std::vector<float> exploreMap;
+    dmaps::gen_player_explore_map(ecs, exploreMap);
+    ecs.entity("explore_map")
+        .set(DijkstraMapData{ exploreMap });
+
+    /*
+    ecs.entity("explore_map").add<VisualiseMap>();
+    ecs.entity("explore_map")
+      .set(DmapWeights{ {{"explore_map", {1.f, 1.f}}} })
       .add<VisualiseMap>();
+    */  
   }
 }
 
