@@ -167,13 +167,13 @@ static void debug_looter_planner()
       {{"health_state", -1}});
 
   goap::add_action_to_planner(pl, "escape", 1,
-      {{"health_state", Healthy}, {"num_loot", 5}},
-      {{"escaped", 1}},
+      { {"health_state", Healthy}, {"num_loot", 5} },
+      { {"escaped", 1} },
       {});
 
   goap::WorldState ws = goap::produce_planner_worldstate(pl,
       {{"enemy_vis", 0},
-       {"loot_vis", 1},
+       {"loot_vis", 0},
        {"num_loot", 0},
        {"have_melee", 1},
        {"have_ranged", 1},
@@ -185,7 +185,7 @@ static void debug_looter_planner()
       {{"num_loot", 5}, {"escaped", 1}, {"health_state", Healthy}});
 
   std::vector<goap::PlanStep> plan;
-  goap::make_plan(pl, ws, goal, plan);
+  goap::make_plan_ida(pl, ws, goal, plan);
   goap::print_plan(pl, ws, plan);
 }
 
