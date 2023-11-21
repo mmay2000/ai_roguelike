@@ -184,12 +184,181 @@ static std::vector<Position> find_path_a_star(const char *input, size_t width, s
   return std::vector<Position>();
 }
 
+static std::vector<Position> openList;
+static std::vector<float> g;
+static std::vector<Position> prev;
+static float suboptimal_bound = std::numeric_limits<float>::max();
+
+static std::vector<Position> find_path_ARA_star(const char* input, size_t width, size_t height, Position from, Position to, float weight)
+{
+    if (from.x < 0 || from.y < 0 || from.x >= int(width) || from.y >= int(height))
+        return std::vector<Position>();
+    if (to.x < 0 || to.y < 0 || to.x >= int(width) || to.y >= int(height))
+        return std::vector<Position>();
+
+    size_t inpSize = width * height;
+
+    float inflation_factor = weight;
+
+    auto getG = [&](Position p) -> float { return g[coord_to_idx(p.x, p.y, width)]; };
+    auto getF = [&](Position p) -> float { return getG(p) + inflation_factor * heuristic(p, to); };
+    auto getF_without_weight = [&](Position p) -> float { return getG(p) + heuristic(p, to); };
+
+    g[coord_to_idx(from.x, from.y, width)] = 0;
+
+    std::vector<Position> closedList;
+    std::vector<Position> inconsList;
+
+    auto find_bestScoreIdx = [&]() -> size_t
+    {
+        size_t bestId = 0;
+        float bestScore = getF(openList[0]);
+        for (size_t i = 1; i < openList.size(); ++i)
+        {
+            float score = getF(openList[i]);
+            if (score < bestScore)
+            {
+                bestId = i;
+                bestScore = score;
+            }
+        }
+        return bestId;
+    };
+
+    if(openList.empty())
+        return std::vector<Position>();
+    size_t bestIdx = find_bestScoreIdx();
+
+    while (getF(to) > getF(openList[bestIdx]))
+    {
+        Position curPos = openList[bestIdx];
+        openList.erase(openList.begin() + bestIdx);
+
+        if (std::find(closedList.begin(), closedList.end(), curPos) != closedList.end())
+        {
+            if (openList.empty())
+                return std::vector<Position>();
+            bestIdx = find_bestScoreIdx();
+            continue;
+        }
+        
+        size_t idx = coord_to_idx(curPos.x, curPos.y, width);
+        const Rectangle rect = { float(curPos.x), float(curPos.y), 1.f, 1.f };
+        DrawRectangleRec(rect, Color{ uint8_t(g[idx]), uint8_t(g[idx]), 0, 100 }); 
+        closedList.emplace_back(curPos);
+
+        //expand
+        auto checkNeighbour = [&](Position p)
+        {
+            // out of bounds
+            if (p.x < 0 || p.y < 0 || p.x >= int(width) || p.y >= int(height))
+                return;
+            size_t idx = coord_to_idx(p.x, p.y, width);
+            // not empty
+            if (input[idx] == '#')
+                return;
+            float edgeWeight = input[idx] == 'o' ? 10.f : 1.f;
+            float gScore = getG(curPos) + 1.f * edgeWeight; // we're exactly 1 unit away
+
+            if (gScore < getG(p))
+            {
+                prev[idx] = curPos;
+                g[idx] = gScore;
+
+                if (!(std::find(closedList.begin(), closedList.end(), p) != closedList.end()))
+                {
+                    bool found = std::find(openList.begin(), openList.end(), p) != openList.end();
+                    if (!found)
+                        openList.emplace_back(p);
+                }
+                else
+                {
+                    if (std::find(inconsList.begin(), inconsList.end(), p) == inconsList.end())
+                        inconsList.emplace_back(p);
+                }
+            }
+        };
+
+        checkNeighbour({ curPos.x + 1, curPos.y });
+        checkNeighbour({ curPos.x - 1, curPos.y });
+        checkNeighbour({ curPos.x, curPos.y + 1 });
+        checkNeighbour({ curPos.x, curPos.y - 1 });
+
+        if (openList.empty())
+            break;
+    }
+    
+    if (!openList.empty())
+    {
+        if (!inconsList.empty())
+        {
+            openList.insert(openList.end(), inconsList.begin(), inconsList.end());
+            inconsList.clear();
+        }
+
+        bestIdx = 0;
+        {
+            float bestScore = getF_without_weight(openList[0]);
+            for (size_t i = 1; i < openList.size(); ++i)
+            {
+                float score = getF_without_weight(openList[i]);
+                if (score < bestScore)
+                {
+                    bestIdx = i;
+                    bestScore = score;
+                }
+            }
+        }
+        suboptimal_bound = std::min(inflation_factor, getG(to) / getG(openList[bestIdx]));
+
+        printf("suboptimal_bound %.1f\n", suboptimal_bound);
+
+        return reconstruct_path(prev, to, width);
+    }
+    printf("suboptimal_bound %.1f\n", suboptimal_bound);
+    return std::vector<Position>();
+}
+
 void draw_nav_data(const char *input, size_t width, size_t height, Position from, Position to, float weight)
 {
   draw_nav_grid(input, width, height);
   std::vector<Position> path = find_path_a_star(input, width, height, from, to, weight);
   //std::vector<Position> path = find_ida_star_path(input, width, height, from, to);
   draw_path(path);
+}
+
+static float eps = 10;
+static int frames_until_next_ara_star_iteration = 0;
+static std::vector<Position> last_path;
+
+static void reset_ara_star(size_t width, size_t height, Position from)
+{
+    frames_until_next_ara_star_iteration = 0;
+    eps = 10;
+    suboptimal_bound = std::numeric_limits<float>::max();
+    openList = { from };
+    size_t inpSize = width * height;
+    g.clear();
+    g.resize(inpSize, std::numeric_limits<float>::max());
+    g[coord_to_idx(from.x, from.y, width)] = 0;
+    prev.clear();
+    prev.resize(inpSize, { -1,-1 });
+}
+
+void draw_nav_data_ARA_star(const char* input, size_t width, size_t height, Position from, Position to, float weight)
+{
+    draw_nav_grid(input, width, height);
+    frames_until_next_ara_star_iteration--;
+    if (frames_until_next_ara_star_iteration < 0)
+    {
+        eps -= 0.75f;
+        if (eps <= 1.f || openList.empty() || suboptimal_bound <= 1.f)
+            reset_ara_star(width, height, from);
+        frames_until_next_ara_star_iteration = 60;
+        last_path = find_path_ARA_star(input, width, height, from, to, eps);
+    }
+   
+    draw_path(last_path);
 }
 
 int main(int /*argc*/, const char ** /*argv*/)
@@ -221,7 +390,8 @@ int main(int /*argc*/, const char ** /*argv*/)
   //camera.offset = Vector2{ width * 0.5f, height * 0.5f };
   camera.zoom = float(height) / float(dungHeight);
 
-  SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
+  SetTargetFPS(10);               // Set our game to run at 60 frames-per-second
+  bool ara_mode = false;
   while (!WindowShouldClose())
   {
     // pick pos
@@ -237,11 +407,13 @@ int main(int /*argc*/, const char ** /*argv*/)
     {
       Position &target = from;
       target = p;
+      reset_ara_star(dungWidth, dungHeight, from);
     }
     else if (IsMouseButtonPressed(1))
     {
       Position &target = to;
       target = p;
+      reset_ara_star(dungWidth, dungHeight, from);
     }
     if (IsKeyPressed(KEY_SPACE))
     {
@@ -249,6 +421,7 @@ int main(int /*argc*/, const char ** /*argv*/)
       spill_drunk_water(navGrid, dungWidth, dungHeight, 8, 10);
       from = dungeon::find_walkable_tile(navGrid, dungWidth, dungHeight);
       to = dungeon::find_walkable_tile(navGrid, dungWidth, dungHeight);
+      reset_ara_star(dungWidth, dungHeight, from);
     }
     if (IsKeyPressed(KEY_UP))
     {
@@ -260,10 +433,18 @@ int main(int /*argc*/, const char ** /*argv*/)
       weight = std::max(1.f, weight - 0.1f);
       printf("new weight %f\n", weight);
     }
+    if (IsKeyPressed(KEY_M))
+    {
+        ara_mode = !ara_mode;
+        reset_ara_star(dungWidth, dungHeight, from);
+    }
     BeginDrawing();
       ClearBackground(BLACK);
       BeginMode2D(camera);
-        draw_nav_data(navGrid, dungWidth, dungHeight, from, to, weight);
+      if(ara_mode)
+        draw_nav_data_ARA_star(navGrid, dungWidth, dungHeight, from, to, weight);
+      else
+          draw_nav_data(navGrid, dungWidth, dungHeight, from, to, weight);
       EndMode2D();
     EndDrawing();
   }
