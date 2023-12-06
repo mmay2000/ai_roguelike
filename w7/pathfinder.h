@@ -1,6 +1,7 @@
 #pragma once
 #include <flecs.h>
 #include <vector>
+#include "ecsTypes.h"
 
 struct PortalConnection
 {
@@ -23,4 +24,6 @@ struct DungeonPortals
 };
 
 void prebuild_map(flecs::world &ecs);
+
+void find_path_(Path& p, const DungeonPortals& dp, const DungeonData& dd);
 

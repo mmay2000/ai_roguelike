@@ -1,7 +1,6 @@
 #include "raylib.h"
 #include <flecs.h>
 #include <algorithm>
-
 #include "ecsTypes.h"
 #include "shootEmUp.h"
 #include "dungeonGen.h"
@@ -51,7 +50,7 @@ int main(int /*argc*/, const char ** /*argv*/)
   camera.target = Vector2{ 0.f, 0.f };
   camera.offset = Vector2{ width * 0.5f, height * 0.5f };
   camera.rotation = 0.f;
-  camera.zoom = 1.f;
+  camera.zoom = 0.5f;
   ecs.entity("camera")
     .set(Camera2D{camera});
 

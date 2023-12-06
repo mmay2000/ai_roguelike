@@ -183,3 +183,10 @@ struct DmapWeights
 };
 
 struct Hive {};
+
+struct Path 
+{
+    Position from;
+    Position to;
+    std::vector<Position> path;
+};

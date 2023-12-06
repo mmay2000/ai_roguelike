@@ -137,6 +137,45 @@ static void register_roguelike_systems(flecs::world &ecs)
         }
       });
     });
+  static auto portalsQuery = ecs.query<const DungeonPortals, const DungeonData>();
+  ecs.system<Path>()
+      .each([&](Path& path)
+          {
+              cameraQuery.each([&](Camera2D cam)
+                  {
+                      if (IsMouseButtonPressed(0))
+                      {
+                          Vector2 mousePosition = GetScreenToWorld2D(GetMousePosition(), cam);
+                          Position p{ (int(mousePosition.x) - (int(mousePosition.x) % ((int)tile_size))) / tile_size,
+                              (int(mousePosition.y) - (int(mousePosition.y) % ((int)tile_size))) / tile_size };
+                          Position& target = path.from;
+                          target = p;
+                          portalsQuery.each([&](const DungeonPortals& dp, const DungeonData& dd) {
+                              find_path_(path, dp, dd);
+                              });
+                      }
+                      else if (IsMouseButtonPressed(1))
+                      {
+                          Vector2 mousePosition = GetScreenToWorld2D(GetMousePosition(), cam);
+                          Position p{ (int(mousePosition.x) - (int(mousePosition.x) % ((int)tile_size)))/tile_size,
+                              (int(mousePosition.y) - (int(mousePosition.y) % ((int)tile_size)))/tile_size };
+                          Position& target = path.to;
+                          target = p;
+                          portalsQuery.each([&](const DungeonPortals& dp, const DungeonData& dd) {
+                              find_path_(path, dp, dd);
+                              });
+                      }
+                  });
+              const Rectangle rect = { float(path.from.x) * tile_size, float(path.from.y) * tile_size, tile_size, tile_size };
+              DrawRectangleRec(rect, GetColor(0x44000088));
+              const Rectangle rect1 = { float(path.to.x) * tile_size, float(path.to.y) * tile_size, tile_size, tile_size };
+              DrawRectangleRec(rect1, GetColor(0x44008888));
+              for(Position& p : path.path)
+              {
+                  const Rectangle rect = { float(p.x) * tile_size, float(p.y) * tile_size, tile_size, tile_size };
+                  DrawRectangleRec(rect, GetColor(0x44880044));
+              }
+          });
   steer::register_systems(ecs);
 }
 
@@ -152,6 +191,8 @@ void init_shoot_em_up(flecs::world &ecs)
 
   const Position walkableTile = dungeon::find_walkable_tile(ecs);
   create_player(ecs, walkableTile * tile_size, "swordsman_tex");
+  ecs.entity()
+      .set(Path{ dungeon::find_walkable_tile(ecs), dungeon::find_walkable_tile(ecs) });
 }
 
 void init_dungeon(flecs::world &ecs, char *tiles, size_t w, size_t h)
